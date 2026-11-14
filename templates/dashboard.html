@@ -1,0 +1,39 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>ExamGuard Dashboard</title>
+</head>
+
+<body>
+
+    <h1>Welcome, {{ user.fullname }}!</h1>
+
+    {% if user.role == "Admin" %}
+
+        <h2>Admin Dashboard</h2>
+        <p>You can manage courses, examinations and users.</p>
+
+    {% elif user.role == "Examiner" %}
+
+        <h2>Examiner Dashboard</h2>
+        <p>You can manage examination slots and evaluate students.</p>
+
+    {% elif user.role == "Student" %}
+
+        <h2>Student Dashboard</h2>
+        <p>You can view examinations and book available slots.</p>
+
+    {% endif %}
+
+    <p>Your role: {{ user.role }}</p>
+
+    <form action="/logout" method="POST">
+        <button type="submit">Logout</button>
+    </form>
+
+</body>
+</html>

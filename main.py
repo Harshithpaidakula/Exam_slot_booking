@@ -1,276 +1,330 @@
 from pathlib import Path
 
-# FastAPI tools for pages, forms, errors, and dependency injection.
-from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import (
+    FastAPI, Request, Form, Depends,
+    Cookie, HTTPException, status
+)
 
-# HTMLResponse returns a page. RedirectResponse sends the browser to another URL.
 from fastapi.responses import HTMLResponse, RedirectResponse
-
-# Jinja2Templates connects Python routes to HTML files in the templates folder.
 from fastapi.templating import Jinja2Templates
-
-# Session lets us use the database in a route.
 from sqlalchemy.orm import Session
 
-# Project files used by this application.
 import database
 import models
-import oauth2
-import schemas
 import utils
+import oauth2
 
+app = FastAPI(title="ExamGuard")
 
-# This creates the FastAPI application.
-# The templates object tells FastAPI where our HTML files are stored.
-
-
-app = FastAPI()
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
 )
 
 
-# This function runs when the server starts.
-# It creates the database tables if they do not exist.
+# Create database tables when application starts
 @app.on_event("startup")
-def create_tables():
+def startup():
     database.create_tables()
 
 
-# Find one user in the database by username.
-# Both registration and login use this helper.
-def find_user(username: str, db: Session):
-    return db.query(models.User).filter(
-        models.User.username == username
-    ).first()
-
-
-# Check whether the username and password are acceptable.
-# HTTPException stops the request and sends an error message.
-def validate_user(username: str, password: str):
-    if not username or not password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username and password are required.",
-        )
-    if len(username) < 3 or len(username) > 80:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username must contain 3 to 80 characters.",
-        )
-    if len(password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must contain at least 8 characters.",
-        )
-
-
-# Create a student account and save it in the database.
-def register_student(data: schemas.StudentRegister, db: Session):
-    validate_user(data.username, data.password)
-
-    if find_user(data.username, db):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already taken.",
-        )
-
-    if data.roll_number:
-        roll_number_exists = db.query(models.StudentProfile).filter(
-            models.StudentProfile.roll_number == data.roll_number
-        ).first()
-        if roll_number_exists:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Roll number is already taken.",
-            )
-
-    # Hash the password before saving it.
-    # We should never save a plain-text password.
-    user = models.User(
-        username=data.username,
-        fullname=data.username,
-        password_hash=utils.hash_password(data.password),
-        role="Student",
-    )
-    user.student_profile = models.StudentProfile(
-        roll_number=data.roll_number,
-        department=data.department,
-        programme=data.programme,
-        semester=data.semester,
-    )
-
-    db.add(user)
-    db.commit()
-
-
-# Check the login details and return the user when they are correct.
-def check_login(username: str, password: str, db: Session):
-    if not username or not password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username and password are required.",
-        )
-
-    user = find_user(username, db)
-    if not user or not utils.verify_password(password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-        )
-    return user
-
-
-# GET / displays the login page.
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="login.html",
-        context={"message": None, "error": None},
-    )
-
-
-# GET /register displays the registration page.
+# Display student registration page
 @app.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="register.html",
-        context={"message": None, "error": None, "form_data": {}},
+        context={
+            "message": None,
+            "error": None
+        }
     )
 
 
-# POST /register-form receives the registration form from register.html.
-@app.post("/register-form", response_class=HTMLResponse)
-def register_form(
-    request: Request,
-    # Form(...) reads values sent by HTML inputs.
-    username: str = Form(...),
-    password: str = Form(...),
-    roll_number: str | None = Form(None),
-    department: str | None = Form(None),
-    programme: str | None = Form(None),
-    semester: int | None = Form(None),
-    db: Session = Depends(database.get_db),
-):
-    # Keep the values so Jinja can refill the form after an error.
-    form_data = {
-        "username": username,
-        "roll_number": roll_number or "",
-        "department": department or "",
-        "programme": programme or "",
-        "semester": semester or "",
-    }
+# Find the logged-in user using their JWT cookie
+def get_logged_in_user(request: Request, db: Session):
+
+    token = request.cookies.get("access_token")
+
+    if not token:
+        return None
 
     try:
-        register_student(
-            schemas.StudentRegister(
-                username=username,
-                password=password,
-                roll_number=roll_number,
-                department=department,
-                programme=programme,
-                semester=semester,
-            ),
-            db,
+        return oauth2.get_user_from_token(token, db)
+
+    except HTTPException:
+        return None
+
+
+# Check whether the user has the required role
+def check_role(user, required_role):
+
+    if user.role != required_role:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to access this page."
         )
-    except HTTPException as error:
-        # If validation fails, show the error on the same page.
+
+
+# Process student registration form
+@app.post("/register", response_class=HTMLResponse)
+def register_student(
+    request: Request,
+    username: str = Form(...),
+    fullname: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(database.get_db)
+):
+
+    # Remove unnecessary spaces
+    username = username.strip()
+    fullname = fullname.strip()
+    email = email.strip().lower()
+
+    error = None
+
+    # Basic validation
+    if not 3 <= len(username) <= 80:
+        error = "Username must contain 3 to 80 characters."
+
+    elif not 1 <= len(fullname) <= 50:
+        error = "Full name is required and must be under 50 characters."
+
+    elif "@" not in email:
+        error = "Enter a valid email address."
+
+    elif len(password) < 8:
+        error = "Password must contain at least 8 characters."
+
+    # Check whether username already exists
+    elif db.query(models.User).filter(
+        models.User.username == username
+    ).first():
+        error = "Username already exists."
+
+    # Check whether email already exists
+    elif db.query(models.User).filter(
+        models.User.email == email
+    ).first():
+        error = "Email already registered."
+
+    # Show error on registration page
+    if error:
         return templates.TemplateResponse(
             request=request,
             name="register.html",
             context={
                 "message": None,
-                "error": error.detail,
-                "form_data": form_data,
+                "error": error
             },
-            status_code=error.status_code,
+            status_code=400
         )
 
-    # If everything works, show a success message.
+    # Create student account
+    student = models.User(
+        username=username,
+        fullname=fullname,
+        email=email,
+        password_hash=utils.hash_password(password),
+        role="Student",
+        isactive=True
+    )
+
+    # Create associated student profile
+    student.student_profile = models.StudentProfile()
+
+    # Save both records in PostgreSQL
+    db.add(student)
+    db.commit()
+
     return templates.TemplateResponse(
         request=request,
         name="register.html",
         context={
-            "message": "Student registered successfully.",
-            "error": None,
-            "form_data": {},
-        },
+            "message": "Student registered successfully!",
+            "error": None
+        }
     )
 
-
-# GET /login displays the login page.
+# Display login page
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
+
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"message": None, "error": None},
+        context={"error": None}
     )
 
 
-# POST /login-form receives the login form from login.html.
-@app.post("/login-form", response_class=HTMLResponse)
-def login_form(
+# Process login form
+@app.post("/login", response_class=HTMLResponse)
+def login_user(
     request: Request,
-    # These values come from the HTML form inputs.
     username: str = Form(...),
     password: str = Form(...),
-    db: Session = Depends(database.get_db),
+    db: Session = Depends(database.get_db)
 ):
-    # Check the username and password.
-    try:
-        user = check_login(username, password, db)
-    except HTTPException as error:
+
+    # Find user by username
+    user = db.query(models.User).filter(
+        models.User.username == username.strip()
+    ).first()
+
+    # Check username, password and account status
+    if (
+        not user
+        or not utils.verify_password(password, user.password_hash)
+        or not user.isactive
+    ):
         return templates.TemplateResponse(
             request=request,
             name="login.html",
-            context={"message": None, "error": error.detail},
-            status_code=error.status_code,
+            context={"error": "Invalid username or password."},
+            status_code=401
         )
 
-    # Create a JWT and store it in a browser cookie.
-    # The cookie will be sent automatically on future requests.
-    response = RedirectResponse("/profile", status_code=status.HTTP_303_SEE_OTHER)
+    # Create JWT
+    token = oauth2.create_access_token(user.id)
+
+    # Redirect and save JWT in browser cookie
+    dashboard_urls = {
+    "Admin": "/admin/dashboard",
+    "Examiner": "/examiner/dashboard",
+    "Student": "/student/dashboard"
+     }
+
+    response = RedirectResponse(
+    url=dashboard_urls[user.role],
+    status_code=status.HTTP_303_SEE_OTHER
+     )
+
+
     response.set_cookie(
-        "access_token",
-        oauth2.create_access_token(user.id),
+        key="access_token",
+        value=token,
         httponly=True,
-        max_age=600,
+        secure=False,  # Local HTTP development only
         samesite="lax",
+        max_age=oauth2.TOKEN_EXPIRE_MINUTES * 60,
+        path="/"
     )
+
     return response
 
 
-# GET /profile is protected. The user must have a valid JWT cookie.
-@app.get("/profile", response_class=HTMLResponse)
-def profile(
+
+# Admin dashboard
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+def admin_dashboard(
     request: Request,
-    access_token: str | None = Cookie(None),
-    db: Session = Depends(database.get_db),
+    db: Session = Depends(database.get_db)
 ):
-    # No cookie means the user has not logged in.
-    if not access_token:
+
+    user = get_logged_in_user(request, db)
+
+    if not user:
         return RedirectResponse("/login")
 
-    try:
-        # Decode the JWT and find the logged-in user.
-        user = oauth2.get_user_from_token(access_token, db)
-    except HTTPException:
-        # Invalid or expired tokens go back to the login page.
-        return RedirectResponse("/login")
+    check_role(user, "Admin")
 
     return templates.TemplateResponse(
         request=request,
-        name="profile.html",
-        context={"username": user.username},
+        name="dashboard.html",
+        context={"user": user}
     )
 
 
-# GET /logout removes the JWT cookie and logs the user out.
-@app.get("/logout")
+# Examiner dashboard
+@app.get("/examiner/dashboard", response_class=HTMLResponse)
+def examiner_dashboard(
+    request: Request,
+    db: Session = Depends(database.get_db)
+):
+
+    user = get_logged_in_user(request, db)
+
+    if not user:
+        return RedirectResponse("/login")
+
+    check_role(user, "Examiner")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"user": user}
+    )
+
+
+# Student dashboard
+@app.get("/student/dashboard", response_class=HTMLResponse)
+def student_dashboard(
+    request: Request,
+    db: Session = Depends(database.get_db)
+):
+
+    user = get_logged_in_user(request, db)
+
+    if not user:
+        return RedirectResponse("/login")
+
+    check_role(user, "Student")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"user": user}
+    )
+
+
+
+
+
+
+
+
+
+
+
+
+# Protected dashboard
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(
+    request: Request,
+    access_token: str | None = Cookie(default=None),
+    db: Session = Depends(database.get_db)
+):
+
+    # Check whether user is logged in
+    if not access_token:
+        return RedirectResponse("/login")
+
+    # Verify JWT and get user
+    try:
+        user = oauth2.get_user_from_token(access_token, db)
+
+    except HTTPException:
+        response = RedirectResponse("/login")
+        response.delete_cookie("access_token", path="/")
+        return response
+
+    # Show dashboard according to user's role
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"user": user}
+    )
+
+
+# Logout
+@app.post("/logout")
 def logout():
-    response = RedirectResponse("/login")
-    response.delete_cookie("access_token")
+
+    response = RedirectResponse(
+        url="/login",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
+
+    response.delete_cookie("access_token", path="/")
+
     return response

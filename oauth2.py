@@ -1,55 +1,69 @@
+
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import HTTPException, status
+from dotenv import load_dotenv
 from jose import JWTError, jwt
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 import models
 
+# Load JWT secret from .env
+load_dotenv()
 
-# JWT learning flow:
-# - create_access_token() makes a signed token after login.
-# - get_user_from_token() checks that token on a protected page.
-# - An expired or changed token is rejected.
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 
-# The secret key signs the token. Set JWT_SECRET_KEY in real deployments.
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-secret-key")
+if not SECRET_KEY:
+    raise ValueError("JWT_SECRET_KEY is missing in .env")
 
-# HS256 is the signing algorithm used for this small example.
 ALGORITHM = "HS256"
-
-# The token stops working after ten minutes.
-ACCESS_TOKEN_EXPIRE_MINUTES = 10
+TOKEN_EXPIRE_MINUTES = 30
 
 
-# Create a JWT containing the user's database ID and an expiry time.
-def create_access_token(user_id: int) -> str:
-    # The expiry time makes the login temporary for better security.
-    expires = datetime.now(timezone.utc) + timedelta(
-        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+# Create JWT after successful login
+def create_access_token(user_id: int):
+
+    expiry = datetime.now(timezone.utc) + timedelta(
+        minutes=TOKEN_EXPIRE_MINUTES
     )
-    payload = {"user_id": str(user_id), "exp": expires}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    data = {
+        "user_id": str(user_id),
+        "exp": expiry
+    }
+
+    token = jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+    return token
 
 
+# Verify JWT and identify the user
+def get_user_from_token(token: str, db: Session):
 
-# Decode the JWT and find the user it belongs to.
-def get_user_from_token(token: str, db: Session) -> models.User:
     try:
-        # decode() checks the signature and the expiry time for us.
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload["user_id"])
+        data = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        user_id = int(data["user_id"])
+
     except (JWTError, KeyError, TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail="Invalid or expired login. Please log in again."
         )
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.id == user_id
+    ).first()
+
     if not user or not user.isactive:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
+            detail="User not found or inactive."
         )
+
     return user
