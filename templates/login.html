@@ -1,0 +1,103 @@
+<!-- Jinja fills this HTML page with messages sent by main.py. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login</title>
+
+    <!-- CSS controls the appearance of the page. -->
+    <style>
+        body {
+            background: #f2f4f7;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        main {
+            background: white;
+            border-radius: 8px;
+            margin: auto;
+            max-width: 360px;
+            padding: 25px;
+        }
+
+        h1, h2, p {
+            text-align: center;
+        }
+
+        h1 {
+            color: #2563eb;
+        }
+
+        label {
+            display: block;
+            margin-top: 15px;
+        }
+
+        input, button {
+            box-sizing: border-box;
+            font-size: 16px;
+            padding: 10px;
+            width: 100%;
+        }
+
+        input {
+            border: 1px solid #aaa;
+            margin-top: 5px;
+        }
+
+        button {
+            background: #2563eb;
+            border: 0;
+            color: white;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .message, .error {
+            padding: 10px;
+        }
+
+        .message {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>ExamGuard</h1>
+        <h2>Login</h2>
+
+        <!-- Show a message only when Python sends one. -->
+        {% if message %}
+            <p class="message">{{ message }}</p>
+        {% endif %}
+
+        <!-- Show an error only when login fails. -->
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% endif %}
+
+        <!-- Send the form values to the login route in main.py. -->
+        <form action="/login-form" method="post">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" required>
+
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" required>
+
+            <button type="submit">Login</button>
+        </form>
+
+        <p><a href="/register">Create a student account</a></p>
+    </main>
+</body>
+</html>

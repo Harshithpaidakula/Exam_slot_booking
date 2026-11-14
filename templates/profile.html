@@ -1,0 +1,19 @@
+<!-- This page is shown only when main.py accepts the JWT cookie. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Profile</title>
+</head>
+<body>
+    <main>
+        <!-- Jinja replaces username with the value sent by Python. -->
+        <h1>Welcome, {{ username }}</h1>
+        <p>You are logged in.</p>
+
+        <!-- This link removes the JWT cookie. -->
+        <a href="/logout">Logout</a>
+    </main>
+</body>
+</html>
