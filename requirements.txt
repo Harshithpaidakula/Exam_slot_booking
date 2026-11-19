@@ -1,0 +1,8 @@
+fastapi
+python-dotenv
+passlib
+python-jose
+python-multipart
+SQLAlchemy
+psycopg2-binary
+uvicorn
